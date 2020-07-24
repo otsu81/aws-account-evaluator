@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  The account evaluator checks accounts in an AWS Organization for activity. It reports last login, spend for a given number of months, and the average growth
+
+Parameters:
+  MaximumThreads:
+    Type: Number
+    Default: 10
+    Description: The maximum number of threads used by the lambda function
+  AccountEvaluatorRoleName:
+    Type: String
+    Default: LambdaAccountEvaluatorRole
+    Description: The name of the IAM role used by the account evaluator function
+  DefaultRole:
+    Type: String
+    Description: The default role for roleswitching into the Organization's child accounts
+    Default: OrganizationAccountAccessRole
+  DefaultAccount:
+    Type: String
+    Description: Default account for the boto factory class for when no account ID is specified
+    Default: 123456789012
+    AllowedPattern: "^[0-9]{12}$"
+  OrganizationsAccount:
+    Type: String
+    Description: The account ID of the organizations account
+    Default: 123456789012
+    AllowedPattern: "^[0-9]{12}$"
+  TrustedAccount:
+    Type: String
+    Description: Account ID trusted by roles which should be excluded from the last login from trusted roles
+    Default: 123456789012
+    AllowedPattern: "^[0-9]{12}$"
+  ExcludeAccounts:
+    Type: String
+    Description: Account IDs which should NOT be processed. Comma separated.
+  MonthsOfHistory:
+    Type: Number
+    Description: Defines the number of months for the billing history to cover
+    Default: 4
+  TeamsHookUrl:
+    Type: String
+    Description: The webhook URL to send to MS Teams
+    Default: https://outlook.office.com/webhook/
+  LogLevel:
+    Type: String
+    Description: The desired logging level for python's logging module
+    Default: WARNING
+  ExcludeOUs:
+    Type: String
+    Description: OUs in the Organization to be excluded from the evaluation
+  OrganizationARN:
+    Type: String
+    Description: The Organization ARN for which the Lambda role should have read permissions. Can be *
+    Default: arn:aws:organizations::123456789012:root/o-xxxxxxxxxxxxx
+  WhitelistedRoles:
+    Type: String
+    Description: IAM roles which shouldn't be evaluated for last used timestamping
+    Default: OrganizationAccountAccessRole,stacksets-exec-xxxxxxxxxxxx
+  Schedule:
+    Type: String
+    Description: Schedule for how often the evaluation should run. Can be either rate(expression) or cron(expression). Defaults to every Monday 09:00.
+    Default: cron(0 9 ? * MON *)
+  ScheduleInput:
+    Type: String
+    Description: The input JSON for the scheduler
+    Default: "{\"SendToTeams\" : \"True\"}"
+
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 900
+
+Resources:
+  AccountEvalatorFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      Description: Evaluates cost trend and last login of AWS accounts in an Organization
+      FunctionName: AccountEvaluator
+      Role: !GetAtt EvaluatorRole.Arn
+      CodeUri: account_evaluator/
+      Handler: handler.handler
+      Runtime: python3.8
+      MemorySize: 1024
+      Events:
+        RunSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: !Ref Schedule
+            Input: !Ref ScheduleInput
+      Environment:
+        Variables:
+          DEFAULT_REGION: eu-west-1
+          DEFAULT_ROLE: !Ref DefaultRole
+          DEFAULT_ACCOUNT: !Ref DefaultAccount
+          ORGANIZATIONS_ACCOUNT: !Ref OrganizationsAccount
+          MAX_THREADS: !Ref MaximumThreads
+          NBR_MONTHS: !Ref MonthsOfHistory
+          TRUSTED_ACCOUNTS: !Ref TrustedAccount
+          EXCLUDE_ACCOUNT_IDS: !Ref ExcludeAccounts
+          TEAMS_HOOK_URL: !Ref TeamsHookUrl
+          LOGLEVEL: !Ref LogLevel
+          EXCLUDE_OUS: !Ref ExcludeOUs
+          WHITELISTED_ROLES: !Ref WhitelistedRoles
+
+  EvaluatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref AccountEvaluatorRoleName
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSOrganizationsReadOnlyAccess
+      Policies:
+        - PolicyName: allowAssumeRole
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub 'arn:aws:iam::*:role/${DefaultRole}'
+        - PolicyName: allowOrgRead
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Ref OrganizationARN
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  FunctionARN:
+    Description: "AccountEvaluator ARN"
+    Value: !GetAtt AccountEvalatorFunction.Arn
+  IamRole:
+    Description: "IAM Role created for Account Evaluator function"
+    Value: !GetAtt EvaluatorRole.Arn
