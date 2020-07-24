@@ -36,7 +36,7 @@ class BotoFactory:
         sts = session.client('sts')
         response = sts.assume_role(
             RoleArn=f"arn:aws:iam::{account_id}:role/{rolename}",
-            RoleSessionName='AxisCloudAdmin',
+            RoleSessionName='OrganizationsAccount',
             DurationSeconds=900
         )
         return boto3_capability(
